@@ -406,25 +406,47 @@ def page_items():
     tab1, tab2 = st.tabs(["Crear/Editar", "Listado y exportación"])
     with tab1:
         st.markdown("**Crear ítem**")
+
+        # --- Selector reactivo FUERA del form ---
+        if "base_lbl_create" not in st.session_state:
+            st.session_state.base_lbl_create = "Volumen"  # valor por defecto
+        col_base, col_info = st.columns([1,2])
+        with col_base:
+            st.session_state.base_lbl_create = st.selectbox(
+                "Tipo base*", list(base_types.keys()),
+                index=["Masa","Volumen","Unidad"].index(st.session_state.base_lbl_create),
+                key="base_lbl_create_select"
+            )
+        base_type = base_types[st.session_state.base_lbl_create]
+        with col_info:
+            st.caption(f"Unidad base: **{fmt_base(base_type)}** — las opciones de compra dependen de esto.")
+
+        # --- Form de creación (los widgets ya usan el base_type seleccionado) ---
         with st.form("item_form", clear_on_submit=True):
             c1,c2,c3,c4 = st.columns(4)
-            name = c1.text_input("Nombre*", placeholder="Tomate Chonto")
-            category = c2.selectbox("Categoría", ["(escribe otra)"] + preset_cats, index=2)
+            name = c1.text_input("Nombre*", placeholder="Tomate Chonto", key="name_create")
+            category = c2.selectbox("Categoría", ["(escribe otra)"] + preset_cats, index=2, key="category_create")
             category = None if category=="(escribe otra)" else category
-            base_lbl = c3.selectbox("Tipo base*", list(base_types.keys()), index=1)
-            base_type = base_types[base_lbl]
-            purchase_unit = c4.selectbox("Unidad de compra*", units_by_base[base_type])
+            # (Quitamos 'Tipo base*' de aquí; ya está fuera del form)
+            purchase_unit = c4.selectbox("Unidad de compra*", units_by_base[base_type], key="purchase_unit_create")
+
             c5,c6,c7,c8 = st.columns(4)
-            given_cpp = c5.number_input(f"Contenido por unidad de compra (en {fmt_base(base_type)})",
-                                        min_value=0.0, value=0.0, step=1.0,
-                                        help="Ej.: paquete=500 g → escribe 500. kg→ deja 0 (se infiere 1000 g)")
+            given_cpp = c5.number_input(
+                f"Contenido por unidad de compra (en {fmt_base(base_type)})",
+                min_value=0.0, value=0.0, step=1.0, key="cpp_create",
+                help="Ej.: paquete=500 g → escribe 500. kg → deja 0 (se infiere 1000 g)"
+            )
             inferred = infer_content_per_purchase(base_type, purchase_unit, given_cpp)
             c6.metric("Factor inferido", f"{inferred:.2f} {fmt_base(base_type)}")
-            min_stock = c7.number_input(f"Stock mínimo (en {fmt_base(base_type)})", min_value=0.0, value=0.0, step=1.0)
-            price_purchase = c8.number_input("Precio por unidad de compra (COP)", min_value=0.0, value=0.0, step=100.0)
+            min_stock = c7.number_input(
+                f"Stock mínimo (en {fmt_base(base_type)})",
+                min_value=0.0, value=0.0, step=1.0, key="min_stock_create"
+            )
+            price_purchase = c8.number_input("Precio por unidad de compra (COP)", min_value=0.0, value=0.0, step=100.0, key="price_create")
             c9,c10 = st.columns(2)
-            sku_custom = c9.text_input("SKU (opcional)")
-            active = c10.checkbox("Activo", value=True)
+            sku_custom = c9.text_input("SKU (opcional)", key="sku_create")
+            active = c10.checkbox("Activo", value=True, key="active_create")
+
             submit = st.form_submit_button("Guardar", use_container_width=True)
             if submit:
                 if not name.strip():
@@ -433,10 +455,12 @@ def page_items():
                     st.error("Define el contenido del paquete en unidades base (>0).")
                 else:
                     try:
-                        sku = create_item(name=name, category=category, base_type=base_type,
-                                          purchase_unit=purchase_unit, content_per_purchase=inferred,
-                                          min_stock_base=min_stock, price_purchase=price_purchase,
-                                          active=active, sku=sku_custom or None)
+                        sku = create_item(
+                            name=name, category=category, base_type=base_type,
+                            purchase_unit=purchase_unit, content_per_purchase=inferred,
+                            min_stock_base=min_stock, price_purchase=price_purchase,
+                            active=active, sku=sku_custom or None
+                        )
                         st.success(f"Ítem creado (SKU: {sku}).")
                     except sqlite3.IntegrityError:
                         st.error("SKU duplicado.")
@@ -447,23 +471,24 @@ def page_items():
         if df.empty:
             st.info("No hay ítems aún.")
         else:
-            sel = st.selectbox("Selecciona", df["name"] + " — " + df["sku"])
+            sel = st.selectbox("Selecciona", df["name"] + " — " + df["sku"], key="select_edit_item")
             row = df.loc[df["name"] + " — " + df["sku"] == sel].iloc[0]
             with st.form("edit_form"):
                 c1,c2,c3,c4 = st.columns(4)
-                name_e = c1.text_input("Nombre*", value=row["name"])
-                category_e = c2.text_input("Categoría", value=row["category"] or "")
-                base_type_e = c3.selectbox("Tipo base*", ["mass","volume","unit"],
-                                           index=["mass","volume","unit"].index(row["base_type"]))
-                purchase_unit_e = c4.text_input("Unidad de compra*", value=row["purchase_unit"])
+                name_e = c1.text_input("Nombre*", value=row["name"], key="name_edit")
+                category_e = c2.text_input("Categoría", value=row["category"] or "", key="category_edit")
+                base_type_e = c3.selectbox("Tipo base (edición)*", ["mass","volume","unit"],
+                                           index=["mass","volume","unit"].index(row["base_type"]), key="base_type_edit")
+                # Cambiamos la etiqueta para evitar colisión + damos key único
+                purchase_unit_e = c4.text_input("Unidad de compra (edición)*", value=row["purchase_unit"], key="purchase_unit_edit")
                 c5,c6,c7,c8 = st.columns(4)
                 cpp_e = c5.number_input(f"Contenido por unidad de compra ({fmt_base(base_type_e)})",
-                                        min_value=0.0, value=float(row["content_per_purchase"] or 0), step=1.0)
+                                        min_value=0.0, value=float(row["content_per_purchase"] or 0), step=1.0, key="cpp_edit")
                 min_stock_e = c6.number_input(f"Mínimo ({fmt_base(base_type_e)})",
-                                              min_value=0.0, value=float(row["min_stock_base"] or 0), step=1.0)
+                                              min_value=0.0, value=float(row["min_stock_base"] or 0), step=1.0, key="min_stock_edit")
                 price_e = c7.number_input("Precio unidad de compra (COP)", min_value=0.0,
-                                          value=float(row["price_purchase"] or 0), step=100.0)
-                sku_e = c8.text_input("SKU", value=row["sku"])
+                                          value=float(row["price_purchase"] or 0), step=100.0, key="price_edit")
+                sku_e = c8.text_input("SKU", value=row["sku"], key="sku_edit")
                 cA,cB,cC = st.columns(3)
                 upd = cA.form_submit_button("Actualizar")
                 toggle = cB.form_submit_button("Activar/Desactivar")
@@ -489,39 +514,6 @@ def page_items():
                     delete_item(int(row["id"]))
                     st.success("Ítem eliminado.")
 
-    with tab2:
-        st.markdown("**Listado y exportación**")
-        cats = ["(todas)"] + fetch_categories()
-        c1,c2,c3 = st.columns([2,1,1])
-        q = c1.text_input("Buscar por nombre/SKU")
-        cat = c2.selectbox("Categoría", cats)
-        active_only = c3.toggle("Solo activos", value=True)
-        df = fetch_items(q, None if cat=="(todas)" else cat, active_only)
-        if not df.empty:
-            st.caption("Las cantidades se muestran en base y en unidades de compra.")
-            joined = df.merge(stock_all()[["id","stock_base"]], on="id", how="left")
-            joined["stock_base_str"] = joined.apply(lambda r: f"{r['stock_base']:.0f} {fmt_base(r['base_type'])}", axis=1)
-            joined["stock_compra_str"] = joined.apply(lambda r: f"{base_to_purchase_units(r, r['stock_base']):.2f} {r['purchase_unit']}", axis=1)
-            joined["precio_base"] = joined.apply(price_per_base, axis=1)
-            st.dataframe(joined[["sku","name","category","base_type","purchase_unit",
-                                 "stock_base_str","stock_compra_str","min_stock_base","price_purchase","precio_base"]],
-                         use_container_width=True, hide_index=True)
-            # Export
-            exp = joined[["sku","name","category","base_type","purchase_unit","content_per_purchase",
-                          "min_stock_base","price_purchase","stock_base"]].copy()
-            cA,cB = st.columns(2)
-            cA.download_button("⬇️ Excel", data=io.BytesIO(pd.ExcelWriter(io.BytesIO(), engine="openpyxl")).getbuffer(),
-                               disabled=True, help="Usa el botón CSV (Excel se genera abajo)")
-            out = io.BytesIO()
-            with pd.ExcelWriter(out, engine="openpyxl") as w:
-                exp.to_excel(w, index=False, sheet_name="items")
-            cB.download_button("⬇️ Exportar Excel", data=out.getvalue(),
-                               file_name="matronas_items.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
-            st.download_button("⬇️ Exportar CSV", data=exp.to_csv(index=False).encode("utf-8"),
-                               file_name="matronas_items.csv", mime="text/csv",
-                               use_container_width=True)
 
 def page_movements():
     st.subheader("↕️ Movimientos (compras, consumos, ajustes)")
